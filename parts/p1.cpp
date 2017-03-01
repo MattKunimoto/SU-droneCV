@@ -17,11 +17,12 @@ int main ( int argc,char **argv ) {
     //Start capture
     cout<<"Capturing "<<nCount<<" frames ...."<<endl;
     time ( &timer_begin );
-    for ( int i=0; i<nCount; i++ ) {
-        Camera.grab();
-        Camera.retrieve ( image);
-        if ( i%5==0 )  cout<<"\r captured "<<i<<" images"<<std::flush;
-    }
+    Camera.grab();
+    Camera.retrieve(image);
+    cv::imwrite("img.bmp", image);
+    Camera.grab();
+    Camera.retrieve(image);
+    cv::imwrite("img4.bmp", image);
     cout<<"Stop camera..."<<endl;
     Camera.release();
     //show time statistics

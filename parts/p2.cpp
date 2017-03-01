@@ -9,69 +9,47 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <vector>
 using namespace std; 
+using namespace cv;
+using namespace raspicam;
 
-bool running;
-raspicam::RaspiCam_Cv Camera;
-std::mutex bufferMtx;
-std::condition_variable cameraCV;
+mutex mtx;
+condition_variable convar;
+bool run = false;
+bool runCap = false;
+bool grabbable = false;
+bool writeable = false;
 
-void cameraFeed() {
-	cout << "Enter camera feed" << endl;
-	int i = 0;
-	cout << "1a" << endl;
-	std::unique_lock<std::mutex> lk(bufferMtx);
-	cout << "2a" << endl;
-	Camera.grab();
-	cout << "3a" << endl;
+void capture(RaspiCam_Cv& camera)
+{
+	unique_lock<mutex> lk(mtx);
+	camera.open();
+	camera.grab();
+	run = true;
+	convar.notify_one();
 	lk.unlock();
-	cout << "4a" << endl;
-	//cameraCV.notify_all();
-	cout << "5a" << endl;
-	while(running){
-		i++;
-		if(i % 30 == 0) cout << "capturing " << i << endl;
-		Camera.grab();
-	}
 }
 
-void retrieveAndDisplay() {
-	cout << "1b" << endl;
-	cv::Mat image;
-	std::unique_lock<std::mutex> lk(bufferMtx);
-	cout << "2b" << endl;
-	//cameraCV.wait(lk);
-	cout << "3b" << endl;
-	char c = (char)cv::waitKey(10);
-	cout << "4b" << endl;
-	int i = 0;
-	while(running){
-		i++;
-		Camera.retrieve(image);
-		cv::imshow("image", image);
-		if(c == 27) running = false;
-	}
-	cout << "5b" << endl;
+void display(RaspiCam_Cv& camera)
+{
+	unique_lock<mutex> lk(mtx);
+	Mat image;
+	image.create(1280,960,CV_8UC1);
+	namedWindow("image", WINDOW_AUTOSIZE);
+	convar.wait(lk, []{return run;});
+	camera.retrieve(image);
+	imshow("image", image);
+	lk.unlock();
+	waitKey();
 }
 
-int main ( ) {
-
-    Camera.set( CV_CAP_PROP_FORMAT, CV_8UC1 );
-    //Open camera
-    cout<<"Opening Camera..."<<endl;
-    if (!Camera.open()) {cerr<<"Error opening the camera"<<endl;return -1;}
-    else running = true;
-    //Start capture
-    std::thread camFeed(cameraFeed);
-    std::thread retAndDisp(retrieveAndDisplay);
-    
-    camFeed.join();
-    retAndDisp.join();
-    
-    Camera.release();
-    
-    //save image 
-    cout<<"Image saved at raspicam_cv_image.jpg"<<endl;
-    return 0;
+int main()
+{
+	Mat image;
+	RaspiCam_Cv camera;
+	camera.set (CV_CAP_PROP_FORMAT, CV_8UC1);
+	thread cameraCapture(capture, ref(camera));
+	thread imageDisplay(display, ref(camera));
+	cameraCapture.join();
+	imageDisplay.join();
 }
