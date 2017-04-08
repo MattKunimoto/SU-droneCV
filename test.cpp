@@ -41,12 +41,12 @@ bool classificationDone = false;
 static const char BACK = 'b';
 static const char FRONT = 'f';
 static const char SIDE = 's';
-static const char NUM_PATTERNS = 2;
-static const int FRAMES = 1000;
+static const char NUM_PATTERNS = 3;
+static const int FRAMES = 10000;
 
-static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
-static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
-//static const string sideCascadeName = "/home/pi/seniordesign/classifiers/side/cascade.xml";
+static const string backCascadeName = "/home/pi/seniordesign/classifiers/back/cascade.xml";
+static const string frontCascadeName = "/home/pi/seniordesign/classifiers/front/cascade.xml";
+static const string sideCascadeName = "/home/pi/seniordesign/classifiers/side/cascade.xml";
 
 static const int WIDTH = 640;
 static const int HEIGHT = 480;
@@ -199,7 +199,7 @@ void classifierManager(RingBuffer& buffer)
 	Mat img;
 	
 	CascadeClassifier backCascade;
-	CascadeClassifier frontCascade;
+	//CascadeClassifier frontCascade; doesn't exist yet
 	//CascadeClassifier sideCascade; doesn't exist yet
 	
 	vector<LocSizeSide> detections;
@@ -210,12 +210,12 @@ void classifierManager(RingBuffer& buffer)
 		return;
 	}
 	
-	if(!frontCascade.load(frontCascadeName)){
+	/*if(!frontCascade.load(frontCascadeName)){
 		running = false;
 		cout << "Error loading front cascade" << endl;
 		return;
 	}
-	/*	THIS DOESN'T EXIST YET
+		THESE DON'T EXIST YET
 	if(!sideCascade.load(sideCascadeName)){
 		running = false;
 		cout << "Error loading side cascade" << endl;
@@ -227,8 +227,8 @@ void classifierManager(RingBuffer& buffer)
 	
 	// Currently just using back cascade on all 3
 	thread backClassifier(classifier, ref(img), ref(detections), backCascade, BACK);
-	thread frontClassifier(classifier, ref(img), ref(detections), frontCascade, FRONT);
-	//thread sideClassifier(classifier, ref(img), ref(detections), backCascade, SIDE);
+	thread frontClassifier(classifier, ref(img), ref(detections), backCascade, FRONT);
+	thread sideClassifier(classifier, ref(img), ref(detections), backCascade, SIDE);
 	
 	// Wait for buffer to be filled
 	unique_lock<mutex> bufLk(bufMtx);
@@ -281,7 +281,7 @@ void classifierManager(RingBuffer& buffer)
 	// End classifiers and camera feed
 	backClassifier.join();
 	frontClassifier.join();
-	//sideClassifier.join();
+	sideClassifier.join();
 	
 }
 
