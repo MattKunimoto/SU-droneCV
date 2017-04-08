@@ -41,12 +41,12 @@ bool classificationDone = false;
 static const char BACK = 'b';
 static const char FRONT = 'f';
 static const char SIDE = 's';
-static const char NUM_PATTERNS = 3;
-static const int FRAMES = 10000;
+static const char NUM_PATTERNS = 2;
+static const int FRAMES = 1000;
 
-static const string backCascadeName = "/home/pi/seniordesign/classifiers/back/cascade.xml";
-static const string frontCascadeName = "/home/pi/seniordesign/classifiers/front/cascade.xml";
-static const string sideCascadeName = "/home/pi/seniordesign/classifiers/side/cascade.xml";
+static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
+static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
+//static const string sideCascadeName = "/home/pi/seniordesign/classifiers/side/cascade.xml";
 
 static const int WIDTH = 640;
 static const int HEIGHT = 480;
@@ -199,23 +199,33 @@ void classifierManager(RingBuffer& buffer)
 	Mat img;
 	
 	CascadeClassifier backCascade;
-	//CascadeClassifier frontCascade; doesn't exist yet
+	CascadeClassifier frontCascade;
 	//CascadeClassifier sideCascade; doesn't exist yet
 	
 	vector<LocSizeSide> detections;
-	
+
+	LocSizeSide detectionBeingFollowed, previousDetection;
+	float * differenceMagnitudes;
+	int predictVector[4] = {};
+	int differenceVector[4] = {};
+	int closestPatternIndex = 0;
+	bool noDetections = true;
+	bool oneDetection = false;
+	bool multipleDetections = false;
+
+
 	if(!backCascade.load(backCascadeName)){
 		running = false;
 		cout << "Error loading back cascade" << endl;
 		return;
 	}
 	
-	/*if(!frontCascade.load(frontCascadeName)){
+	if(!frontCascade.load(frontCascadeName)){
 		running = false;
 		cout << "Error loading front cascade" << endl;
 		return;
 	}
-		THESE DON'T EXIST YET
+	/*	THIS DOESN'T EXIST YET
 	if(!sideCascade.load(sideCascadeName)){
 		running = false;
 		cout << "Error loading side cascade" << endl;
@@ -227,8 +237,8 @@ void classifierManager(RingBuffer& buffer)
 	
 	// Currently just using back cascade on all 3
 	thread backClassifier(classifier, ref(img), ref(detections), backCascade, BACK);
-	thread frontClassifier(classifier, ref(img), ref(detections), backCascade, FRONT);
-	thread sideClassifier(classifier, ref(img), ref(detections), backCascade, SIDE);
+	thread frontClassifier(classifier, ref(img), ref(detections), frontCascade, FRONT);
+	//thread sideClassifier(classifier, ref(img), ref(detections), backCascade, SIDE);
 	
 	// Wait for buffer to be filled
 	unique_lock<mutex> bufLk(bufMtx);
@@ -257,6 +267,54 @@ void classifierManager(RingBuffer& buffer)
 		classLk.lock();
 		classCV.wait(classLk, []{return classificationDone;});
 		// ClassLk is reacquired after wait()
+
+		//Filter detections for most likely one
+		if(noDetections == true && detections.size() > 0){
+			detectionBeingFollowed = detections[0];
+			noDetections = false;
+			oneDetection = true;
+		}else if(oneDetection = true && detections.size() > 0){
+			closestPatternIndex = 0;
+			previousDetection = detectionBeingFollowed;
+			differenceMagnitudes = new float [detections.size()];
+			for(int j = 0; i < detections.size(); i++){
+				differenceMagnitudes[j] = abs(detections[j].x - previousDetection.x) + abs(detections[j].y - previousDetection.y) + abs(detections[j].w - previousDetection.w) + abs(detections[j].h - previousDetection.h);
+				if(differenceMagnitudes[j] < differenceMagnitudes[closestPatternIndex])
+					closestPatternIndex = j;
+			}
+			delete [] differenceMagnitudes;
+			detectionBeingFollowed = detections[closestPatternIndex];
+			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
+			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
+			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
+			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
+			oneDetection = false;
+			multipleDetections = true;
+		}else if(multipleDetections = true && detections.size() > 0){
+			closestPatternIndex = 0;
+			previousDetection = detectionBeingFollowed;
+			differenceMagnitudes = new float [detections.size()];
+			for(int j = 0; i < detections.size(); i++){
+				differenceVector[0] = detections[j].x - previousDetection.x;
+				differenceVector[1] = detections[j].y - previousDetection.y;
+				differenceVector[2] = detections[j].w - previousDetection.w;
+				differenceVector[3] = detections[j].h - previousDetection.h;
+				differenceMagnitudes[j] = abs((differenceVector[0] - predictVector[0])/predictVector[0]) + abs((differenceVector[1] - predictVector[1])/predictVector[1]) + abs((differenceVector[2] - predictVector[2])/predictVector[2]) + abs((differenceVector[3] - predictVector[3])/predictVector[3]);
+				if(differenceMagnitudes[j] < differenceMagnitudes[closestPatternIndex])
+					closestPatternIndex = j;
+			}
+			delete [] differenceMagnitudes;
+			detectionBeingFollowed = detections[closestPatternIndex];
+			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
+			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
+			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
+			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
+		}else{
+			oneDetection = false;
+			multipleDetections = false;
+			noDetections = true;
+		}
+		detections.clear();
 	}
 	running = false;
 	
@@ -281,7 +339,7 @@ void classifierManager(RingBuffer& buffer)
 	// End classifiers and camera feed
 	backClassifier.join();
 	frontClassifier.join();
-	sideClassifier.join();
+	//sideClassifier.join();
 	
 }
 
