@@ -19,6 +19,15 @@
 #include <atomic>
 #include <chrono>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h> 	// size_t, ssize_t
+#include <sys/socket.h> // socket funcs
+#include <netinet/in.h> // sockaddr_in
+#include <arpa/inet.h> 	// htons, inet_pton
+#include <unistd.h> 	// close
+
 using namespace std;
 using namespace cv;
 using namespace raspicam;
@@ -27,9 +36,11 @@ using namespace chrono;
 //buffer and classifier sync primitives
 mutex bufMtx;
 mutex classMtx;
+mutex detectionMtx;
 
 condition_variable bufCV;
 condition_variable classCV;
+condition_variable detectCV;
 
 atomic_uchar classifiersFinished;
 
@@ -37,12 +48,17 @@ bool buffersReady = false;
 bool startClassifiers = false;
 bool running = false;
 bool classificationDone = false;
+bool followPatternReading = false;
+bool followPatternWriting = false;
+bool newDetection = false;
 
 static const char BACK = 'b';
 static const char FRONT = 'f';
 static const char SIDE = 's';
 static const char NUM_PATTERNS = 2;
 static const int FRAMES = 1000;
+static const int DEFAULT_PORT = 14550;	// ArduPilot port
+static const int BUFFER_SIZE = 2048;
 
 static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
 static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
@@ -126,6 +142,15 @@ public:
 		side = s;
 	}
 	
+	LocSizeSide & operator=(const LocSizeSide & orig)
+	{
+		x = orig.x;
+		y = orig.y;
+		w = orig.w;
+		h = orig.h;
+		side = orig.side;
+	}
+
 	int x, y, w, h; //x and y are middle of pattern, not top left
 	char side;
 };
@@ -194,7 +219,7 @@ void classifier(Mat& img, vector<LocSizeSide>& detections, CascadeClassifier cas
 	
 }
 
-void classifierManager(RingBuffer& buffer)
+void classifierManager(RingBuffer& buffer, LocSizeSide& detectionBeingFollowed)
 {
 	Mat img;
 	
@@ -204,7 +229,7 @@ void classifierManager(RingBuffer& buffer)
 	
 	vector<LocSizeSide> detections;
 
-	LocSizeSide detectionBeingFollowed, previousDetection;
+	LocSizeSide previousDetection;
 	float * differenceMagnitudes;
 	int predictVector[4] = {};
 	int differenceVector[4] = {};
@@ -234,7 +259,8 @@ void classifierManager(RingBuffer& buffer)
 	
 	// Lock classifiers
 	unique_lock<mutex> classLk(classMtx);
-	
+	unique_lock<mutex> detectLk(detectionMtx, defer_lock);
+
 	// Currently just using back cascade on all 3
 	thread backClassifier(classifier, ref(img), ref(detections), backCascade, BACK);
 	thread frontClassifier(classifier, ref(img), ref(detections), frontCascade, FRONT);
@@ -270,10 +296,15 @@ void classifierManager(RingBuffer& buffer)
 
 		//Filter detections for most likely one
 		if(noDetections == true && detections.size() > 0){
+			detectLk.lock();
+			detectCV.wait(detectLk, [] {return !followPatternReading;});
 			detectionBeingFollowed = detections[0];
+			newDetection = true;
+			detectLk.unlock();
 			noDetections = false;
 			oneDetection = true;
-		}else if(oneDetection = true && detections.size() > 0){
+			cout << "One" << endl;
+		}else if(oneDetection == true && detections.size() > 0){
 			closestPatternIndex = 0;
 			previousDetection = detectionBeingFollowed;
 			differenceMagnitudes = new float [detections.size()];
@@ -283,14 +314,19 @@ void classifierManager(RingBuffer& buffer)
 					closestPatternIndex = j;
 			}
 			delete [] differenceMagnitudes;
+			detectLk.lock();
+			detectCV.wait(detectLk, [] {return !followPatternReading;});
 			detectionBeingFollowed = detections[closestPatternIndex];
+			newDetection = true;
+			detectLk.unlock();
 			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
 			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
 			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
 			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
 			oneDetection = false;
 			multipleDetections = true;
-		}else if(multipleDetections = true && detections.size() > 0){
+			cout << "Two" << endl;
+		}else if(multipleDetections == true && detections.size() > 0){
 			closestPatternIndex = 0;
 			previousDetection = detectionBeingFollowed;
 			differenceMagnitudes = new float [detections.size()];
@@ -304,16 +340,24 @@ void classifierManager(RingBuffer& buffer)
 					closestPatternIndex = j;
 			}
 			delete [] differenceMagnitudes;
+			detectLk.lock();
+			detectCV.wait(detectLk, [] {return !followPatternReading;});
 			detectionBeingFollowed = detections[closestPatternIndex];
+			newDetection = true;
+			detectLk.unlock();
 			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
 			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
 			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
 			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
+			cout << "Three" << endl;
 		}else{
 			oneDetection = false;
 			multipleDetections = false;
 			noDetections = true;
+			newDetection = false;
+			cout << "Zero" << endl;
 		}
+
 		detections.clear();
 	}
 	running = false;
@@ -343,11 +387,84 @@ void classifierManager(RingBuffer& buffer)
 	
 }
 
+void udp_server(LocSizeSide& detection)
+{
+	int sock;					// socket id
+	unsigned short servPort;			// port number
+	struct sockaddr_in servAddr;			// our server address struct
+	struct sockaddr_in clientAddr;			// remote client address struct
+	socklen_t addrLen = sizeof(clientAddr);		// length of addresses
+	int recvlen;					// bytes received
+	unsigned char buffer[BUFFER_SIZE];		// receive buffer
+	bool validMessage = false;			// bool to check for if a valid message was received
+	
+	unique_lock<mutex> detectLk(detectionMtx, defer_lock);
+	LocSizeSide detectionToFollow;
+
+	// 1. Create a UDP socket
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock < 0) {
+		cerr << "Error with create socket" << endl;
+		exit (-1);
+	}	
+	else{
+		printf("Socket created with ID %d\n", sock);
+	}
+	
+	// 2. Define server address struct
+	servPort = DEFAULT_PORT;
+	printf("Using default port number %d.\n", DEFAULT_PORT);	
+	
+	// Set the fields for servAddr struct
+	// INADDR_ANY is a wildcard for any IP address
+	//	- binds socket to all available interfaces
+	memset((char *)&servAddr, 0, sizeof(servAddr));
+	servAddr.sin_family = AF_INET; 					// always AF_INET
+	servAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servAddr.sin_port = htons(servPort);
+	
+	// 3. Bind socket to server address
+	if(bind(sock, (struct sockaddr *) &servAddr, sizeof(servAddr)) < 0){
+		cerr << "Error with bind socket";
+		exit(-1);
+	}	
+	
+	// Main loop to receive/send data with clients
+	while(!validMessage){
+		printf("Waiting on port %d\n", servPort);
+		recvlen = recvfrom(sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&clientAddr, &addrLen);
+		printf("Received %d bytes.\n", recvlen);
+		if(recvlen > 0){
+			buffer[recvlen] = 0;
+			printf("Received message: '%s'\n", buffer);
+			validMessage = true;
+		}
+	}
+	
+	while(1){
+		// Send MAVLink commands
+		detectLk.lock();
+		detectCV.wait(detectLk, [] {return newDetection;});
+		followPatternReading = true;
+		detectionToFollow = detection;
+		followPatternReading = false;
+		newDetection = false;
+		cout << "A: " << detectionToFollow.x << " " << detectionToFollow.y << " " << detectionToFollow.w << " " << detectionToFollow.h;
+		detectLk.unlock();
+
+		// Send function
+		// sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr *)&clientAddr, addrLen);
+	}
+
+	 close(sock);	
+}
+
 int main()
 {
 	// Create buffer
 	RingBuffer buffer;
-	
+	LocSizeSide detectionToFollow;
+
 	// Create and set up camera
 	RaspiCam_Cv camera;
 	camera.set(CV_CAP_PROP_FORMAT, CV_8UC1); // Set camera to 8-bit grayscale
@@ -358,11 +475,13 @@ int main()
 	// Initialize threads
 	running = true;
 	thread cam(cameraFeed, ref(camera), ref(buffer));
-	thread classMngr(classifierManager, ref(buffer));
-	
+	thread classMngr(classifierManager, ref(buffer), ref(detectionToFollow));
+	thread mavlinkServer(udp_server, ref(detectionToFollow));
+
 	// Exit camera feed and classifier manager
 	cam.join();
 	classMngr.join();
-	
+	mavlinkServer.join();
+
 	return 0;
 }
