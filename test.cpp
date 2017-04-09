@@ -19,6 +19,15 @@
 #include <atomic>
 #include <chrono>
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h> 	// size_t, ssize_t
+#include <sys/socket.h> // socket funcs
+#include <netinet/in.h> // sockaddr_in
+#include <arpa/inet.h> 	// htons, inet_pton
+#include <unistd.h> 	// close
+
 using namespace std;
 using namespace cv;
 using namespace raspicam;
@@ -43,6 +52,8 @@ static const char FRONT = 'f';
 static const char SIDE = 's';
 static const char NUM_PATTERNS = 2;
 static const int FRAMES = 1000;
+static const int DEFAULT_PORT = 14550;	// ArduPilot port
+static const int BUFFER_SIZE = 2048;
 
 static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
 static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
@@ -341,6 +352,69 @@ void classifierManager(RingBuffer& buffer)
 	frontClassifier.join();
 	//sideClassifier.join();
 	
+}
+
+void udp_server()
+{
+	int sock;					// socket id
+	unsigned short servPort;			// port number
+	struct sockaddr_in servAddr;			// our server address struct
+	struct sockaddr_in clientAddr;			// remote client address struct
+	socklen_t addrLen = sizeof(clientAddr);		// length of addresses
+	int recvlen;					// bytes received
+	unsigned char buffer[BUFFER_SIZE];		// receive buffer
+	bool validMessage = false;			// bool to check for if a valid message was received
+	
+	
+	
+	// 1. Create a UDP socket
+	sock = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock < 0) {
+		cerr << "Error with create socket" << endl;
+		exit (-1);
+	}	
+	else{
+		printf("Socket created with ID %d\n", sock);
+	}
+	
+	// 2. Define server address struct
+	servPort = DEFAULT_PORT;
+	printf("Using default port number %d.\n", DEFAULT_PORT);	
+	
+	// Set the fields for servAddr struct
+	// INADDR_ANY is a wildcard for any IP address
+	//	- binds socket to all available interfaces
+	memset((char *)&servAddr, 0, sizeof(servAddr));
+	servAddr.sin_family = AF_INET; 					// always AF_INET
+	servAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servAddr.sin_port = htons(servPort);
+	
+	// 3. Bind socket to server address
+	if(bind(sock, (struct sockaddr *) &servAddr, sizeof(servAddr)) < 0){
+		cerr << "Error with bind socket";
+		exit(-1);
+	}	
+	
+	// Main loop to receive/send data with clients
+	while(!validMessage){
+		printf("Waiting on port %d\n", servPort);
+		recvlen = recvfrom(sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&clientAddr, &addrLen);
+		printf("Received %d bytes.\n", recvlen);
+		if(recvlen > 0){
+			buffer[recvlen] = 0;
+			printf("Received message: '%s'\n", buffer);
+			validMessage = true;
+		}
+	}
+	
+	while(1){
+		// Send MAVLink commands
+		
+		// Send function
+		// sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr *)&clientAddr, addrLen);
+	}
+
+	 close(sock);	
 }
 
 int main()
