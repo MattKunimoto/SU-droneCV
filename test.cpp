@@ -59,6 +59,12 @@ static const char NUM_PATTERNS = 2;
 static const int FRAMES = 1000;
 static const int DEFAULT_PORT = 14550;	// ArduPilot port
 static const int BUFFER_SIZE = 2048;
+static const int DEADZONE_LEFT_BOUND = 288;
+static const int DEADZONE_RIGHT_BOUND = 352;
+static const int DEADZONE_NEAR_BOUND = 40; //Totally made up at the moment
+static const int DEADZONE_FAR_BOUND = 10; //Totally made up 
+static const int DEG_LONG_ONE_METER = 90; //Degrees * 10^-7
+static const int DEG_LAT_ONE_METER = 133; //Degrees * 10^-7
 
 static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
 static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
@@ -141,18 +147,61 @@ public:
 		h = rect.height;
 		side = s;
 	}
-	
-	LocSizeSide & operator=(const LocSizeSide & orig)
-	{
-		x = orig.x;
-		y = orig.y;
-		w = orig.w;
-		h = orig.h;
-		side = orig.side;
-	}
 
 	int x, y, w, h; //x and y are middle of pattern, not top left
 	char side;
+};
+
+class DetectionBuffer{
+public:	
+	// Constructor for ring buffer, creates 4 buffers in bi-directional circular link
+	DetectionBuffer(){
+		currentNode = new Node; //create buff1
+		currentNode->next = new Node; //create buff2 as buff1 next
+		currentNode->next->prev = currentNode; //link buff2 prev to buff1
+		currentNode->next->next = new Node; //create buff3 as next for 2
+		currentNode->next->next->prev = currentNode->next; //link 3 prev to 2
+		currentNode->prev = new Node; //create buff4 as buff1 prev
+		currentNode->prev->next = currentNode; //link buff4 next to buff1
+		currentNode->prev->prev = currentNode->next->next; //link buff4 prev to buff3
+		currentNode->next->next->next = currentNode->prev; //link buff3 next to buff4
+	}
+	
+	// overloaded assignement operator to add images from camera feed easily
+	void operator=(const LocSizeSide& detect){
+		currentNode->detection = detect;
+		currentNode = currentNode->next;
+	}
+	
+	// destructor to clean up buffers
+	~DetectionBuffer(){
+		delete currentNode->next->next;
+		delete currentNode->next;
+		delete currentNode->prev;
+		delete currentNode;
+	}
+	
+	//Access last saved image
+	LocSizeSide getLast(){
+		return currentNode->prev->detection;
+	}
+	
+private:
+	//Nodes for buffer (each one is a buffer with links to the other 2)
+	struct Node{
+	public:
+		Node(){
+			next = nullptr;
+			prev = nullptr;
+		}
+		
+		LocSizeSide detection;
+		Node* next;
+		Node* prev;
+	};
+	
+	//base node
+	Node * currentNode = nullptr;
 };
 
 void cameraFeed(RaspiCam_Cv& camera, RingBuffer& buffer)
@@ -219,7 +268,7 @@ void classifier(Mat& img, vector<LocSizeSide>& detections, CascadeClassifier cas
 	
 }
 
-void classifierManager(RingBuffer& buffer, LocSizeSide& detectionBeingFollowed)
+void classifierManager(RingBuffer& buffer, DetectionBuffer& detectionBeingFollowed)
 {
 	Mat img;
 	
@@ -259,7 +308,7 @@ void classifierManager(RingBuffer& buffer, LocSizeSide& detectionBeingFollowed)
 	
 	// Lock classifiers
 	unique_lock<mutex> classLk(classMtx);
-	unique_lock<mutex> detectLk(detectionMtx, defer_lock);
+	//unique_lock<mutex> detectLk(detectionMtx, defer_lock);
 
 	// Currently just using back cascade on all 3
 	thread backClassifier(classifier, ref(img), ref(detections), backCascade, BACK);
@@ -296,17 +345,18 @@ void classifierManager(RingBuffer& buffer, LocSizeSide& detectionBeingFollowed)
 
 		//Filter detections for most likely one
 		if(noDetections == true && detections.size() > 0){
-			detectLk.lock();
-			detectCV.wait(detectLk, [] {return !followPatternReading;});
+			//detectLk.lock();
+			//detectCV.wait(detectLk, [] {return !followPatternReading;});
 			detectionBeingFollowed = detections[0];
-			newDetection = true;
-			detectLk.unlock();
+			//newDetection = true;
+			//detectLk.unlock();
+			//detectCV.notify_all();
 			noDetections = false;
 			oneDetection = true;
 			cout << "One" << endl;
 		}else if(oneDetection == true && detections.size() > 0){
 			closestPatternIndex = 0;
-			previousDetection = detectionBeingFollowed;
+			previousDetection = detectionBeingFollowed.getLast();
 			differenceMagnitudes = new float [detections.size()];
 			for(int j = 0; i < detections.size(); i++){
 				differenceMagnitudes[j] = abs(detections[j].x - previousDetection.x) + abs(detections[j].y - previousDetection.y) + abs(detections[j].w - previousDetection.w) + abs(detections[j].h - previousDetection.h);
@@ -314,21 +364,22 @@ void classifierManager(RingBuffer& buffer, LocSizeSide& detectionBeingFollowed)
 					closestPatternIndex = j;
 			}
 			delete [] differenceMagnitudes;
-			detectLk.lock();
-			detectCV.wait(detectLk, [] {return !followPatternReading;});
+			//detectLk.lock();
+			//detectCV.wait(detectLk, [] {return !followPatternReading;});
 			detectionBeingFollowed = detections[closestPatternIndex];
-			newDetection = true;
-			detectLk.unlock();
-			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
-			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
-			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
-			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
+			//newDetection = true;
+			//detectLk.unlock();
+			//detectCV.notify_all();
+			predictVector[0] = detections[closestPatternIndex].x - previousDetection.x;
+			predictVector[1] = detections[closestPatternIndex].y - previousDetection.y;
+			predictVector[2] = detections[closestPatternIndex].w - previousDetection.w;
+			predictVector[3] = detections[closestPatternIndex].h - previousDetection.h;
 			oneDetection = false;
 			multipleDetections = true;
 			cout << "Two" << endl;
 		}else if(multipleDetections == true && detections.size() > 0){
 			closestPatternIndex = 0;
-			previousDetection = detectionBeingFollowed;
+			previousDetection = detectionBeingFollowed.getLast();
 			differenceMagnitudes = new float [detections.size()];
 			for(int j = 0; i < detections.size(); i++){
 				differenceVector[0] = detections[j].x - previousDetection.x;
@@ -340,15 +391,16 @@ void classifierManager(RingBuffer& buffer, LocSizeSide& detectionBeingFollowed)
 					closestPatternIndex = j;
 			}
 			delete [] differenceMagnitudes;
-			detectLk.lock();
-			detectCV.wait(detectLk, [] {return !followPatternReading;});
+			//detectLk.lock();
+			//detectCV.wait(detectLk, [] {return !followPatternReading;});
 			detectionBeingFollowed = detections[closestPatternIndex];
-			newDetection = true;
-			detectLk.unlock();
-			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
-			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
-			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
-			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
+			//newDetection = true;
+			//detectLk.unlock();
+			//detectCV.notify_all();
+			predictVector[0] = detections[closestPatternIndex].x - previousDetection.x;
+			predictVector[1] = detections[closestPatternIndex].y - previousDetection.y;
+			predictVector[2] = detections[closestPatternIndex].w - previousDetection.w;
+			predictVector[3] = detections[closestPatternIndex].h - previousDetection.h;
 			cout << "Three" << endl;
 		}else{
 			oneDetection = false;
@@ -387,7 +439,7 @@ void classifierManager(RingBuffer& buffer, LocSizeSide& detectionBeingFollowed)
 	
 }
 
-void udp_server(LocSizeSide& detection)
+void udp_server(DetectionBuffer& detection)
 {
 	int sock;					// socket id
 	unsigned short servPort;			// port number
@@ -397,8 +449,11 @@ void udp_server(LocSizeSide& detection)
 	int recvlen;					// bytes received
 	unsigned char buffer[BUFFER_SIZE];		// receive buffer
 	bool validMessage = false;			// bool to check for if a valid message was received
-	
-	unique_lock<mutex> detectLk(detectionMtx, defer_lock);
+	char* send_message = "test";
+	  
+	float heading = -1.0;
+
+	//unique_lock<mutex> detectLk(detectionMtx, defer_lock);
 	LocSizeSide detectionToFollow;
 
 	// 1. Create a UDP socket
@@ -443,17 +498,77 @@ void udp_server(LocSizeSide& detection)
 	
 	while(1){
 		// Send MAVLink commands
-		detectLk.lock();
-		detectCV.wait(detectLk, [] {return newDetection;});
-		followPatternReading = true;
-		detectionToFollow = detection;
-		followPatternReading = false;
-		newDetection = false;
-		cout << "A: " << detectionToFollow.x << " " << detectionToFollow.y << " " << detectionToFollow.w << " " << detectionToFollow.h;
-		detectLk.unlock();
+		//detectLk.lock();
+		//detectCV.wait(detectLk, [] {return newDetection;});
+		//followPatternReading = true;
+		detectionToFollow = detection.getLast();
+		//followPatternReading = false;
+		//newDetection = false;
+		//detectCV.notify_all();
 
+		if(detectionToFollow.x < DEADZONE_LEFT_BOUND){
+			if(detectionToFollow.w < DEADZONE_FAR_BOUND){
+				//move left and forward
+				cout << "move left and forward";
+				heading = 315.0;
+			}else if(detectionToFollow.w > DEADZONE_NEAR_BOUND){
+				//move left and backwards
+				cout << "move left and backwards";
+				heading = 225.0;
+				//set heading to 225
+			}else{
+				//move left
+				cout << "move left";
+				heading = 270.0;
+				//set heading to 270
+			}
+		}else if(detectionToFollow.x > DEADZONE_RIGHT_BOUND){
+			if(detectionToFollow.w < DEADZONE_FAR_BOUND){
+				//move right and forward
+				cout << "move right and forward";
+				//set heading to 45
+				heading = 45.0;
+			}else if(detectionToFollow.w > DEADZONE_NEAR_BOUND){
+				//move right and backwards
+				cout << "move right and backwards";
+				//set heading to 135
+				heading = 135.0;
+			}else{
+				//move right
+				cout << "move right";
+				//set heading to 90
+				heading = 90.0;
+			}
+		}else{
+			if(detectionToFollow.w < DEADZONE_FAR_BOUND){
+				//move forward
+				cout << "move forward";
+				//set heading to 0
+				heading = 0.0;
+			}else if(detectionToFollow.w > DEADZONE_NEAR_BOUND){
+				//move backwards
+				cout << "move backwards";
+				//set heading to 180
+				heading = 180.0;
+			}else{
+				//nothing
+				cout << "stay still";
+				//set heading to -1
+				heading = -1.0;
+			}
+		}
+
+		switch(heading){
+			case -1.0:
+				//waypoint is where drone is
+				break;
+
+			default:
+				//waypoint is current longitude-sin(yaw + heading) * 0.00001329946, current lattitude+cos(yaw + heading) * 0.00000899418
+		}
+		this_thread::sleep_for(milliseconds(10));
 		// Send function
-		// sendto(sock, buffer, strlen(buffer), 0, (struct sockaddr *)&clientAddr, addrLen);
+		sendto(sock, send_message, strlen(send_message), 0, (struct sockaddr *)&clientAddr, addrLen);
 	}
 
 	 close(sock);	
@@ -462,8 +577,9 @@ void udp_server(LocSizeSide& detection)
 int main()
 {
 	// Create buffer
-	RingBuffer buffer;
-	LocSizeSide detectionToFollow;
+	RingBuffer imgBuffer;
+	DetectionBuffer detectionToFollow;
+	//LocSizeSide detectionToFollow;
 
 	// Create and set up camera
 	RaspiCam_Cv camera;
@@ -474,8 +590,8 @@ int main()
 	
 	// Initialize threads
 	running = true;
-	thread cam(cameraFeed, ref(camera), ref(buffer));
-	thread classMngr(classifierManager, ref(buffer), ref(detectionToFollow));
+	thread cam(cameraFeed, ref(camera), ref(imgBuffer));
+	thread classMngr(classifierManager, ref(imgBuffer), ref(detectionToFollow));
 	thread mavlinkServer(udp_server, ref(detectionToFollow));
 
 	// Exit camera feed and classifier manager
