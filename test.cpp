@@ -65,6 +65,7 @@ static const int DEADZONE_NEAR_BOUND = 40; //Totally made up at the moment
 static const int DEADZONE_FAR_BOUND = 10; //Totally made up 
 static const int DEG_LONGITUDE_ONE_METER = 90; //Degrees * 10^-7
 static const int DEG_LATITUDE_ONE_METER = 133; //Degrees * 10^-7
+static const int METERS_PER_WAYPOINT = 2;
 
 static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
 static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
@@ -564,7 +565,7 @@ void udp_server(DetectionBuffer& detection)
 				break;
 
 			default:
-				//waypoint is current longitude-sin(yaw + heading / 1000) * DEG_LONGITUDE_ONE_METER, current lattitude+cos(yaw + heading / 1000) * DEG_LATITUDE_ONE_METER
+				//waypoint is current longitude-sin(yaw + heading / 1000) * METERS_PER_WAYPOINT * DEG_LONGITUDE_ONE_METER, current lattitude+cos(yaw + heading / 1000) * METERS_PER_WAYPOINT * DEG_LATITUDE_ONE_METER
 		}
 		this_thread::sleep_for(milliseconds(10));
 		// Send function
