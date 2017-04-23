@@ -63,8 +63,8 @@ static const int DEADZONE_LEFT_BOUND = 288;
 static const int DEADZONE_RIGHT_BOUND = 352;
 static const int DEADZONE_NEAR_BOUND = 40; //Totally made up at the moment
 static const int DEADZONE_FAR_BOUND = 10; //Totally made up 
-static const int DEG_LONG_ONE_METER = 90; //Degrees * 10^-7
-static const int DEG_LAT_ONE_METER = 133; //Degrees * 10^-7
+static const int DEG_LONGITUDE_ONE_METER = 90; //Degrees * 10^-7
+static const int DEG_LATITUDE_ONE_METER = 133; //Degrees * 10^-7
 
 static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
 static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
@@ -451,7 +451,7 @@ void udp_server(DetectionBuffer& detection)
 	bool validMessage = false;			// bool to check for if a valid message was received
 	char* send_message = "test";
 	  
-	float heading = -1.0;
+	int heading = -1;
 
 	//unique_lock<mutex> detectLk(detectionMtx, defer_lock);
 	LocSizeSide detectionToFollow;
@@ -510,16 +510,16 @@ void udp_server(DetectionBuffer& detection)
 			if(detectionToFollow.w < DEADZONE_FAR_BOUND){
 				//move left and forward
 				cout << "move left and forward";
-				heading = 315.0;
+				heading = 31500;
 			}else if(detectionToFollow.w > DEADZONE_NEAR_BOUND){
 				//move left and backwards
 				cout << "move left and backwards";
-				heading = 225.0;
+				heading = 22500;
 				//set heading to 225
 			}else{
 				//move left
 				cout << "move left";
-				heading = 270.0;
+				heading = 27000;
 				//set heading to 270
 			}
 		}else if(detectionToFollow.x > DEADZONE_RIGHT_BOUND){
@@ -527,44 +527,44 @@ void udp_server(DetectionBuffer& detection)
 				//move right and forward
 				cout << "move right and forward";
 				//set heading to 45
-				heading = 45.0;
+				heading = 4500;
 			}else if(detectionToFollow.w > DEADZONE_NEAR_BOUND){
 				//move right and backwards
 				cout << "move right and backwards";
 				//set heading to 135
-				heading = 135.0;
+				heading = 13000;
 			}else{
 				//move right
 				cout << "move right";
 				//set heading to 90
-				heading = 90.0;
+				heading = 9000;
 			}
 		}else{
 			if(detectionToFollow.w < DEADZONE_FAR_BOUND){
 				//move forward
 				cout << "move forward";
 				//set heading to 0
-				heading = 0.0;
+				heading = 0;
 			}else if(detectionToFollow.w > DEADZONE_NEAR_BOUND){
 				//move backwards
 				cout << "move backwards";
 				//set heading to 180
-				heading = 180.0;
+				heading = 18000;
 			}else{
 				//nothing
 				cout << "stay still";
 				//set heading to -1
-				heading = -1.0;
+				heading = -1;
 			}
 		}
 
 		switch(heading){
-			case -1.0:
+			case -1:
 				//waypoint is where drone is
 				break;
 
 			default:
-				//waypoint is current longitude-sin(yaw + heading) * 0.00001329946, current lattitude+cos(yaw + heading) * 0.00000899418
+				//waypoint is current longitude-sin(yaw + heading / 1000) * DEG_LONGITUDE_ONE_METER, current lattitude+cos(yaw + heading / 1000) * DEG_LATITUDE_ONE_METER
 		}
 		this_thread::sleep_for(milliseconds(10));
 		// Send function
