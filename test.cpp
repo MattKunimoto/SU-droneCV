@@ -140,16 +140,17 @@ public:
 	{}
 	
 	//constructor to allow for 
-	LocSizeSide(Rect rect, char s)
+	LocSizeSide(Rect rect, char Side, int Score)
 	{
 		x = rect.x + (rect.width / 2); //x and y are set to middle
 		y = rect.y + (rect.height / 2);
 		w = rect.width;
 		h = rect.height;
-		side = s;
+		side = Side;
+		score = Score;
 	}
 
-	int x, y, w, h; //x and y are middle of pattern, not top left
+	int x, y, w, h, score; //x and y are middle of pattern, not top left
 	char side;
 };
 
@@ -284,10 +285,7 @@ void classifierManager(RingBuffer& buffer, DetectionBuffer& detectionBeingFollow
 	int predictVector[4] = {};
 	int differenceVector[4] = {};
 	int closestPatternIndex = 0;
-	bool noDetections = true;
-	bool oneDetection = false;
-	bool multipleDetections = false;
-
+	int detectionStage = 0; //0: no detections found, 1: one detection found previously, 2: more than one found previously
 
 	if(!backCascade.load(backCascadeName)){
 		running = false;
@@ -345,17 +343,26 @@ void classifierManager(RingBuffer& buffer, DetectionBuffer& detectionBeingFollow
 		// ClassLk is reacquired after wait()
 
 		//Filter detections for most likely one
-		if(noDetections == true && detections.size() > 0){
+		if(detections.size() == 1 && detectionStage == 0){
+			detectionBeingFollowed = detections[0];
+			detectionStage = 1;
+		}else if(detections.size() == 1 && detectionStage != 0){
+			detectionBeingFollowed = detections[0];
+			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
+			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
+			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
+			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
+			detectionStage = (detectionStage == 1) ? 2 : 1;
+		}else if(detections.size() > 1 && detectionStage == 0){
 			//detectLk.lock();
 			//detectCV.wait(detectLk, [] {return !followPatternReading;});
 			detectionBeingFollowed = detections[0];
 			//newDetection = true;
 			//detectLk.unlock();
 			//detectCV.notify_all();
-			noDetections = false;
-			oneDetection = true;
+			detectionStage = 1;
 			cout << "One" << endl;
-		}else if(oneDetection == true && detections.size() > 0){
+		}else if(detections.size() > 1 && detectionStage == 1){
 			closestPatternIndex = 0;
 			previousDetection = detectionBeingFollowed.getLast();
 			differenceMagnitudes = new float [detections.size()];
@@ -371,14 +378,13 @@ void classifierManager(RingBuffer& buffer, DetectionBuffer& detectionBeingFollow
 			//newDetection = true;
 			//detectLk.unlock();
 			//detectCV.notify_all();
-			predictVector[0] = detections[closestPatternIndex].x - previousDetection.x;
-			predictVector[1] = detections[closestPatternIndex].y - previousDetection.y;
-			predictVector[2] = detections[closestPatternIndex].w - previousDetection.w;
-			predictVector[3] = detections[closestPatternIndex].h - previousDetection.h;
-			oneDetection = false;
-			multipleDetections = true;
+			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
+			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
+			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
+			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
+			detectionStage = 2;
 			cout << "Two" << endl;
-		}else if(multipleDetections == true && detections.size() > 0){
+		}else if(detections.size() > 1 && detectionStage == 2){
 			closestPatternIndex = 0;
 			previousDetection = detectionBeingFollowed.getLast();
 			differenceMagnitudes = new float [detections.size()];
@@ -398,16 +404,14 @@ void classifierManager(RingBuffer& buffer, DetectionBuffer& detectionBeingFollow
 			//newDetection = true;
 			//detectLk.unlock();
 			//detectCV.notify_all();
-			predictVector[0] = detections[closestPatternIndex].x - previousDetection.x;
-			predictVector[1] = detections[closestPatternIndex].y - previousDetection.y;
-			predictVector[2] = detections[closestPatternIndex].w - previousDetection.w;
-			predictVector[3] = detections[closestPatternIndex].h - previousDetection.h;
+			predictVector[0] = detectionBeingFollowed.x - previousDetection.x;
+			predictVector[1] = detectionBeingFollowed.y - previousDetection.y;
+			predictVector[2] = detectionBeingFollowed.w - previousDetection.w;
+			predictVector[3] = detectionBeingFollowed.h - previousDetection.h;
 			cout << "Three" << endl;
 		}else{
-			oneDetection = false;
-			multipleDetections = false;
-			noDetections = true;
-			newDetection = false;
+			detectionStage = 0;
+			//newDetection = false;
 			cout << "Zero" << endl;
 		}
 
