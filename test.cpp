@@ -456,6 +456,8 @@ void udp_server(DetectionBuffer& detection)
 	bool validMessage = false;			// bool to check for if a valid message was received
 	char* send_message = "test";
 	
+	uint8_t flight_mode = 0b00000000;
+	
 	uint32_t timestamp = DEFAULT_TIMESTAMP;
 	uint32_t current_lat = DEFAULT_LATITUDE;
 	uint32_t current_lon = DEFAULT_LONGITUDE;
@@ -523,7 +525,7 @@ void udp_server(DetectionBuffer& detection)
 							mavlink_heartbeat_t hb;
 							mavlink_msg_heartbeat_decode(&msg, &hb);
 							
-							
+							flight_mode = hb.base_mode;
 							
 							#ifdef MSG_DEBUG
 								cout << endl;
@@ -659,8 +661,8 @@ void udp_server(DetectionBuffer& detection)
 					break;
 
 				default:
-					//waypoint is current longitude-sin(yaw + heading / 1000) * METERS_PER_WAYPOINT * DEG_LONGITUDE_ONE_METER, current lattitude+cos(yaw + heading / 1000) * METERS_PER_WAYPOINT * DEG_LATITUDE_ONE_METER
-					desired_lon = current_lon-sin(current_hdg + heading / 1000) * METERS_PER_WAYPOINT * DEG_LONGITUDE_ONE_METER;
+					//waypoint is current longitude+sin(yaw + heading / 1000) * METERS_PER_WAYPOINT * DEG_LONGITUDE_ONE_METER, current lattitude+cos(yaw + heading / 1000) * METERS_PER_WAYPOINT * DEG_LATITUDE_ONE_METER
+					desired_lon = current_lon+sin(current_hdg + heading / 1000) * METERS_PER_WAYPOINT * DEG_LONGITUDE_ONE_METER;
 					desired_lat = current_lat+cos(current_hdg + heading / 1000) * METERS_PER_WAYPOINT * DEG_LONGITUDE_ONE_METER;
 					mavlink_msg_set_position_target_global_int_pack(CC_SYSID, CC_COMPID, &msg, timestamp,
 						TARGET_ID, MAV_COMP_ID_ALL, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, ENABLE_POSITION_BITS,
@@ -673,10 +675,9 @@ void udp_server(DetectionBuffer& detection)
 					message_sent = true;		
 			}
 			this_thread::sleep_for(milliseconds(10));
-			}
 		}
 	}	
-	 close(sock);	
+	close(sock);	
 }
 
 int main()
