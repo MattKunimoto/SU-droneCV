@@ -66,6 +66,7 @@ static const int DEADZONE_FAR_BOUND = 10; //Totally made up
 static const int DEG_LONGITUDE_ONE_METER = 90; //Degrees * 10^-7
 static const int DEG_LATITUDE_ONE_METER = 133; //Degrees * 10^-7
 static const int METERS_PER_WAYPOINT = 2;
+static const uint8_t NO_MODE = 0b00000000;
 
 static const string backCascadeName = "/home/pi/seniordesign/classifiers/backCascade/cascade.xml";
 static const string frontCascadeName = "/home/pi/seniordesign/classifiers/frontCascade/cascade.xml";
@@ -456,7 +457,7 @@ void udp_server(DetectionBuffer& detection)
 	bool validMessage = false;			// bool to check for if a valid message was received
 	char* send_message = "test";
 	
-	uint8_t flight_mode = 0b00000000;
+	uint8_t flight_mode = NO_MODE;
 	
 	uint32_t timestamp = DEFAULT_TIMESTAMP;
 	uint32_t current_lat = DEFAULT_LATITUDE;
@@ -495,18 +496,6 @@ void udp_server(DetectionBuffer& detection)
 		cerr << "Error with bind socket";
 		exit(-1);
 	}	
-	
-	// Main loop to receive/send data with clients
-	while(!validMessage){
-		printf("Waiting on port %d\n", servPort);
-		recvlen = recvfrom(sock, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&clientAddr, &addrLen);
-		printf("Received %d bytes.\n", recvlen);
-		if(recvlen > 0){
-			buffer[recvlen] = 0;
-			printf("Received message: '%s'\n", buffer);
-			validMessage = true;
-		}
-	}
 	
 	while(1){
 		// printf("Waiting on port %d\n", servPort);
@@ -668,11 +657,15 @@ void udp_server(DetectionBuffer& detection)
 						TARGET_ID, MAV_COMP_ID_ALL, MAV_FRAME_GLOBAL_RELATIVE_ALT_INT, ENABLE_POSITION_BITS,
 						desired_lat, desired_lon, desired_alt, 0, 0, 0, 0, 0, 0, 0, 0);
 					send_length = mavlink_msg_to_send_buffer(buffer, &msg);
-					sendto(sock, buffer, MAVLINK_MAX_PACKET_LEN, 0, (struct sockaddr *)&clientAddr, addrLen);
-					request_sent = true;
-					// cout << "Message sent, desired alt: " << desired_alt << endl;					
+					
+					if(flight_mode == MAV_MODE_FLAG_GUIDED_ENABLED){
+						sendto(sock, buffer, MAVLINK_MAX_PACKET_LEN, 0, (struct sockaddr *)&clientAddr, addrLen);
+						request_sent = true;
+						// cout << "Message sent, desired alt: " << desired_alt << endl;					
 
-					message_sent = true;		
+						message_sent = true;			
+					}
+		
 			}
 			this_thread::sleep_for(milliseconds(10));
 		}
